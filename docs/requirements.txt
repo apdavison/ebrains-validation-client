@@ -1,2 +1,3 @@
+sphinx_rtd_theme
 ebrains_validation_framework
 sciunit
