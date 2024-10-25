@@ -4,7 +4,7 @@
   "license": "https://spdx.org/licenses/BSD-3-Clause.html",
   "codeRepository": "https://github.com/HumanBrainProject/ebrains-validation-client",
   "dateModified": "2024-10-25",
-  "downloadUrl": null,
+  "downloadUrl": "https://files.pythonhosted.org/packages/78/36/6546ddd1d0ae73378d99bd82832c438ccd2e98c3b8e4a8c22eb26d26d192/ebrains_validation_framework-0.9.2.tar.gz",
   "issueTracker": "https://github.com/HumanBrainProject/ebrains-validation-client/issues",
   "name": "ebrains-validation-framework",
   "version": "0.9.2",
