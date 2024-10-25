@@ -1,6 +1,6 @@
 [project]
 name = "ebrains_validation_framework"
-version = "0.9.1"
+version = "0.9.2"
 description = "Python client for the EBRAINS Validation Framework web services."
 readme = "README.md"
 authors = [

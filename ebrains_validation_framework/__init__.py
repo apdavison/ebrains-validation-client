@@ -35,7 +35,7 @@ except ImportError:
     have_collab_token_handler = False
 
 
-__version__ = "0.9.1"
+__version__ = "0.9.2"
 
 
 TOKENFILE = os.path.expanduser("~/.ebrainstoken")
@@ -90,7 +90,7 @@ class BaseClient(object):
 
     __test__ = False
 
-    def __init__(self, username=None, password=None, environment="production", token=None):
+    def __init__(self, username=None, password=None, environment="production", token=None, interactive=True):
         self.username = username
         self.verify = True
         self.environment = environment
@@ -118,79 +118,85 @@ class BaseClient(object):
                         raise KeyError(f"{err_msg_base} does not contain environment = {environment}")
             else:
                 raise IOError(f"{err_msg_base} not found in the current directory.")
-        if self.token:
-            pass
-        elif password is None:
-            self.token = None
+        self._authenticate(password, interactive)
+
+    def _authenticate(self, password, interactive):
+        # If a token is provided, we try using it.
+        # If not, we try to get a token from the environment
+        # or from a local cache
+        if not self.token:
             if have_collab_token_handler:
                 # if are we running in a Jupyter notebook within the Collaboratory
                 # the token is already available
                 self.token = oauth.get_token()
             elif os.path.exists(TOKENFILE):
-                if username:
-                    # check for a stored token
+                if self.username:
                     with open(TOKENFILE) as fp:
-                        data = json.load(fp).get(username, None)
+                        data = json.load(fp).get(self.username, None)
                         if data and "access_token" in data:
                             self.token = data["access_token"]
-                            if not self._check_token_valid():
-                                print(
-                                    "EBRAINS authentication token is invalid or has expired. "
-                                    "Will need to re-authenticate."
-                                )
-                                self.token = None
                         else:
-                            print(f"EBRAINS authentication token file not having required JSON data. data = {data}")
+                            print(f"No token for {self.username} found in {TOKENFILE}")
                 else:
                     print("Authentication token file found, but you have not provided your username.")
             else:
                 print("EBRAINS authentication token file not found locally.")
 
-            if self.token is None:
-                if not username:
-                    print("\n==============================================")
-                    print("Please enter your EBRAINS username.")
-                    username = input("EBRAINS Username: ")
+        # If we don't have a token, we try to authenticate with username and password
+        if not self._check_token_valid():
+            print(
+                "EBRAINS authentication token is invalid or has expired. "
+                "Will need to re-authenticate."
+            )
+            if (not self.username) and interactive:
+                print("\n==============================================")
+                print("Please enter your EBRAINS username.")
+                self.username = input("EBRAINS Username: ")
 
-                password = os.environ.get("EBRAINS_PASS")
-                if password is not None:
+            if self.username:
+                password = password or os.environ.get("EBRAINS_PASS")
+                if (not password) and interactive:
+                    # prompt for password
+                    print("Please enter your EBRAINS password: ")
+                    password = getpass.getpass()
+
+                if password:
                     try:
-                        self._ebrains_auth(username, password)
-                    except Exception:
-                        print(
-                            "Authentication Failure. "
-                            "Possibly incorrect EBRAINS password saved in environment variable 'EBRAINS_PASS'."
-                        )
-                if not hasattr(self, "config"):
-                    try:
-                        # prompt for password
-                        print("Please enter your EBRAINS password: ")
-                        password = getpass.getpass()
-                        self._ebrains_auth(username, password)
+                        self._ebrains_auth(self.username, password)
                     except Exception:
                         print("Authentication Failure! Password entered is possibly incorrect.")
                         raise
-                with open(TOKENFILE, "w") as fp:
-                    json.dump({username: {"access_token": self.config["access_token"]}}, fp)
-                os.chmod(TOKENFILE, 0o600)
-        else:
-            try:
-                self._ebrains_auth(username, password)
-            except Exception:
-                print("Authentication Failure! Password entered is possibly incorrect.")
-                raise
+
+        if self.token:
+            self.auth = EBRAINSAuth(self.token)
+
+            # store token in local cache
+            if os.path.exists(TOKENFILE):
+                with open(TOKENFILE, "r") as fp:
+                    token_data = json.load(fp)
+            else:
+                token_data = {}
+            token_data[self.username] = {"access_token": self.token}
+
             with open(TOKENFILE, "w") as fp:
-                json.dump({username: {"access_token": self.config["access_token"]}}, fp)
+                json.dump(token_data, fp)
+                fp.write("\n")
             os.chmod(TOKENFILE, 0o600)
-        self.auth = EBRAINSAuth(self.token)
+        else:
+            self.auth = None
 
     def _check_token_valid(self):
-        url = "https://iam.ebrains.eu/auth/realms/hbp/protocol/openid-connect/userinfo"
-        data = requests.get(url, auth=EBRAINSAuth(self.token), verify=self.verify)
-        if data.status_code == 200:
-            return True
-        else:
-            return False
+        if self.token:
+            url = "https://iam.ebrains.eu/auth/realms/hbp/protocol/openid-connect/userinfo"
+            data = requests.get(url, auth=EBRAINSAuth(self.token), verify=self.verify)
+            if data.status_code == 200:
+                remote_username = data.json()["preferred_username"]
+                if self.username and self.username != remote_username:
+                    raise Exception("Username does not match token")
+                else:
+                    self.username = remote_username
+                return True
+        return False
 
     def _format_people_name(self, names):
         # converts a string of people names separated by semi-colons
@@ -447,7 +453,7 @@ class TestLibrary(BaseClient):
             }
 
     token : string, optional
-        You may directly input a valid authenticated token from Collaboratory v1 or v2.
+        You may directly input a valid authenticated EBRAINS access token.
         Note: you should use the `access_token` and NOT `refresh_token`.
 
     Examples
@@ -460,8 +466,8 @@ class TestLibrary(BaseClient):
 
     __test__ = False
 
-    def __init__(self, username=None, password=None, environment="production", token=None):
-        super(TestLibrary, self).__init__(username, password, environment, token)
+    def __init__(self, username=None, password=None, environment="production", token=None, interactive=True):
+        super(TestLibrary, self).__init__(username, password, environment, token, interactive)
         self._set_app_info()
 
     def _set_app_info(self):
@@ -1580,8 +1586,13 @@ class TestLibrary(BaseClient):
                 files_to_upload.extend(test_result.related_data["figures"])
             if files_to_upload:
                 list_dict_files_uploaded = [
-                    {"download_url": f["filepath"], "size": f["filesize"]}
-                    for f in data_store.upload_data(files_to_upload)
+                    {
+                        "download_url": ftu["filepath"],
+                        "size": ftu["filesize"],
+                        "hash": ftu["hash"],
+                        "local_path": ftu["local_path"]
+                    }
+                    for ftu in data_store.upload_data(files_to_upload)
                 ]
                 results_storage.extend(list_dict_files_uploaded)
 
@@ -1729,8 +1740,8 @@ class ModelCatalog(BaseClient):
 
     __test__ = False
 
-    def __init__(self, username=None, password=None, environment="production", token=None):
-        super(ModelCatalog, self).__init__(username, password, environment, token)
+    def __init__(self, username=None, password=None, environment="production", token=None, interactive=True):
+        super(ModelCatalog, self).__init__(username, password, environment, token, interactive)
         self._set_app_info()
 
     def _set_app_info(self):
@@ -2541,6 +2552,7 @@ class ModelCatalog(BaseClient):
         hash="",
         morphology="",
         license="",
+        collab_id=None
     ):
         """Register a new model instance.
 
@@ -2569,6 +2581,10 @@ class ModelCatalog(BaseClient):
             URL(s) to the morphology file(s) employed in this model.
         license : string
             Indicates the license applicable for this model instance.
+        collab_id : string
+            Specifies the ID of the host collab in the EBRAINS Collaboratory
+            (the model instance would belong to this collab).
+            If not provided, defaults to the collab of the parent model project.
 
         Returns
         -------
@@ -2590,6 +2606,7 @@ class ModelCatalog(BaseClient):
 
         instance_data = locals()
         instance_data.pop("self")
+        instance_data["project_id"] = instance_data.pop("collab_id")
 
         for key, val in instance_data.items():
             if val == "":
@@ -2614,7 +2631,7 @@ class ModelCatalog(BaseClient):
         else:
             handle_response_error("Error in adding model instance", response)
 
-    def find_model_instance_else_add(self, model_obj):
+    def find_model_instance_else_add(self, model_obj, collab_id=None):
         """Find existing model instance; else create a new instance
 
         This checks if the input model object has an associated model instance.
@@ -2624,6 +2641,9 @@ class ModelCatalog(BaseClient):
         ----------
         model_obj : object
             Python object representing a model.
+        collab_id : str
+            In case of adding a new model instance, add it to this collab.
+            If None, add to the same collab as the parent model.
 
         Returns
         -------
@@ -2664,6 +2684,7 @@ class ModelCatalog(BaseClient):
                     source=getattr(model_obj, "remote_url", ""),
                     version=model_obj.model_version,
                     parameters=getattr(model_obj, "parameters", ""),
+                    collab_id=collab_id or getattr(model_obj, "collab_id", None)
                 )
         else:
             model_instance = self.get_model_instance(instance_id=model_obj.model_instance_uuid)
