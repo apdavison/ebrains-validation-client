@@ -17,6 +17,7 @@ Other possibilities:
 """
 
 import os
+import hashlib
 import json
 import mimetypes
 from warnings import warn
@@ -28,6 +29,12 @@ import requests
 import ebrains_drive
 
 mimetypes.init()
+
+
+def file_digest(path):
+    with open(path, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256")
+    return digest.hexdigest()
 
 
 class FileSystemDataStore(object):
@@ -104,6 +111,8 @@ class CollabDriveDataStore(_CollabDataStore):
                 {
                     "filepath": upload_path_prefix + file_entity.path,
                     "filesize": file_entity.size,
+                    "hash": file_digest(local_path),
+                    "local_path": relative_path
                 }
             )
             # this does not work as the link changes with token
@@ -206,6 +215,8 @@ class CollabBucketDataStore(_CollabDataStore):
                 {
                     "filepath": remote_url,
                     "filesize": os.stat(local_path).st_size,
+                    "hash": file_digest(local_path),
+                    "local_path": relative_path
                 }
             )
         return uploaded_file_paths
@@ -310,11 +321,13 @@ class SwiftDataStore(object):
             url_prefix = container_obj.public_url + "/"
         remote_paths = container_obj.upload(file_paths, remote_directory=remote_directory, overwrite=overwrite)
         uploaded_file_paths = []
-        for ind, f in enumerate(file_paths):
+        for ind, local_path in enumerate(file_paths):
             uploaded_file_paths.append(
                 {
                     "filepath": url_prefix + remote_paths[ind],
-                    "filesize": os.path.getsize(f),
+                    "filesize": os.path.getsize(local_path),
+                    "hash": file_digest(local_path),
+                    "local_path": remote_paths[ind]
                 }
             )
         return uploaded_file_paths
